@@ -31,6 +31,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -116,6 +117,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -128,3 +130,33 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Datos del hospital — se inyectan en reportes/plantillas y como defaults.
 HOSPITAL_NAME = 'Antapaccay'
 HOSPITAL_ADDRESS = ''
+
+# Jazzmin — tema del admin
+JAZZMIN_SETTINGS = {
+    'site_title': 'Laboratorio Antapaccay',
+    'site_header': 'Laboratorio Antapaccay',
+    'site_brand': 'Antapaccay',
+    'welcome_sign': 'Bienvenido al laboratorio Antapaccay',
+    'copyright': 'Antapaccay',
+    'search_model': ['studies.Patient', 'studies.Study'],
+    'topmenu_links': [
+        {'name': 'Inicio', 'url': 'admin:index'},
+        {'app': 'studies'},
+    ],
+    'icons': {
+        'studies.Patient': 'fas fa-user-injured',
+        'studies.Study': 'fas fa-x-ray',
+        'auth.User': 'fas fa-user',
+        'auth.Group': 'fas fa-users',
+    },
+    'order_with_respect_to': ['studies', 'auth'],
+    'show_ui_builder': False,
+}
+
+JAZZMIN_UI_TWEAKS = {
+    'theme': 'flatly',
+    'dark_mode_theme': 'darkly',
+    'navbar': 'navbar-primary navbar-dark',
+    'sidebar': 'sidebar-dark-primary',
+    'sidebar_nav_compact_style': True,
+}

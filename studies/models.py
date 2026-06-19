@@ -68,6 +68,10 @@ class Study(models.Model):
                 check=Q(bits_stored__lte=models.F('bits_allocated')),
                 name='study_bits_stored_le_allocated',
             ),
+            CheckConstraint(
+                check=Q(exposure_date__lte=models.F('register_date')),
+                name='study_exposure_before_register',
+            ),
         ]
 
     def __str__(self):
