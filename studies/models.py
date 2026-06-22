@@ -28,6 +28,18 @@ class Patient(models.Model):
         return self.name
 
 
+class BodyPart(models.Model):
+    name = models.CharField('Nombre', max_length=100, unique=True)
+
+    class Meta:
+        verbose_name = 'Parte del cuerpo'
+        verbose_name_plural = 'Partes del cuerpo'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Study(models.Model):
     patient = models.ForeignKey(
         Patient, on_delete=models.PROTECT, related_name='studies',
@@ -42,9 +54,6 @@ class Study(models.Model):
     exposure_date = models.DateField('Fecha de exposición', null=True, blank=True)
     exposure_time = models.TimeField('Hora de exposición', null=True, blank=True)
 
-    body_part = models.CharField(
-        'Parte del cuerpo', max_length=100, blank=True,
-    )
     referring_physician = models.CharField(
         'Médico referente', max_length=200, blank=True,
     )
@@ -92,10 +101,11 @@ class StudyDocument(models.Model):
     )
     width = models.PositiveIntegerField('Ancho (px)', null=True, blank=True)
     height = models.PositiveIntegerField('Alto (px)', null=True, blank=True)
-    description = models.CharField(
-        'Descripción', max_length=200, blank=True,
-        help_text='Opcional: vista, secuencia o nota del archivo.',
+    body_part = models.ForeignKey(
+        BodyPart, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='documents', verbose_name='Parte del cuerpo',
     )
+    date = models.DateField('Fecha', null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -104,4 +114,4 @@ class StudyDocument(models.Model):
         ordering = ['uploaded_at']
 
     def __str__(self):
-        return self.description or self.image.name.rsplit('/', 1)[-1]
+        return self.image.name.rsplit('/', 1)[-1]
