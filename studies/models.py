@@ -6,8 +6,8 @@ class Patient(models.Model):
     SEX_CHOICES = [('V', 'Varón'), ('M', 'Mujer')]
 
     name = models.CharField('Nombre', max_length=200)
-    sex = models.CharField('Sexo', max_length=1, choices=SEX_CHOICES)
-    age = models.PositiveSmallIntegerField('Edad')
+    sex = models.CharField('Sexo', max_length=1, choices=SEX_CHOICES, blank=True)
+    age = models.PositiveSmallIntegerField('Edad', null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -17,13 +17,15 @@ class Patient(models.Model):
         ordering = ['name']
         constraints = [
             CheckConstraint(
-                check=Q(sex__in=['V', 'M']),
+                check=Q(sex__in=['V', 'M', '']),
                 name='patient_sex_valid',
             ),
         ]
 
     def __str__(self):
-        return f'{self.name} ({self.get_sex_display()}, {self.age})'
+        if self.age is not None and self.sex:
+            return f'{self.name} ({self.get_sex_display()}, {self.age})'
+        return self.name
 
 
 class Study(models.Model):
@@ -35,27 +37,27 @@ class Study(models.Model):
         'N° de acceso', unique=True, null=True, blank=True,
     )
 
-    register_date = models.DateField('Fecha de registro')
-    register_time = models.TimeField('Hora de registro')
-    exposure_date = models.DateField('Fecha de exposición')
-    exposure_time = models.TimeField('Hora de exposición')
+    register_date = models.DateField('Fecha de registro', null=True, blank=True)
+    register_time = models.TimeField('Hora de registro', null=True, blank=True)
+    exposure_date = models.DateField('Fecha de exposición', null=True, blank=True)
+    exposure_time = models.TimeField('Hora de exposición', null=True, blank=True)
 
     body_part = models.CharField(
         'Parte del cuerpo', max_length=100, blank=True,
     )
     referring_physician = models.CharField(
-        'Médico referente', max_length=200,
+        'Médico referente', max_length=200, blank=True,
     )
     performing_physician = models.CharField(
-        'Médico ejecutor', max_length=200,
+        'Médico ejecutor', max_length=200, blank=True,
     )
 
-    image_width = models.PositiveIntegerField('Ancho (px)')
-    image_height = models.PositiveIntegerField('Alto (px)')
-    bits_allocated = models.PositiveSmallIntegerField('Bits asignados')
-    bits_stored = models.PositiveSmallIntegerField('Bits usados')
-
-    pdf = models.FileField('PDF', upload_to='studies/%Y/%m/')
+    bits_allocated = models.PositiveSmallIntegerField(
+        'Bits asignados', null=True, blank=True,
+    )
+    bits_stored = models.PositiveSmallIntegerField(
+        'Bits usados', null=True, blank=True,
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -77,3 +79,29 @@ class Study(models.Model):
     def __str__(self):
         ref = self.access_number or f'#{self.pk}'
         return f'{ref} — {self.patient.name}'
+
+
+class StudyDocument(models.Model):
+    study = models.ForeignKey(
+        Study, on_delete=models.CASCADE, related_name='documents',
+        verbose_name='Estudio',
+    )
+    image = models.ImageField(
+        'Imagen JPG', upload_to='studies/%Y/%m/',
+        width_field='width', height_field='height',
+    )
+    width = models.PositiveIntegerField('Ancho (px)', null=True, blank=True)
+    height = models.PositiveIntegerField('Alto (px)', null=True, blank=True)
+    description = models.CharField(
+        'Descripción', max_length=200, blank=True,
+        help_text='Opcional: vista, secuencia o nota del archivo.',
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Documento'
+        verbose_name_plural = 'Documentos'
+        ordering = ['uploaded_at']
+
+    def __str__(self):
+        return self.description or self.image.name.rsplit('/', 1)[-1]
