@@ -20,6 +20,7 @@ from scripts_img.empaquetar_img import (
     empaquetar_img,
     generar_uid,
 )
+from scripts_img.render_img import renderizar_img
 
 from .models import BodyPart, Patient, Study, StudyDocument
 
@@ -230,8 +231,24 @@ class StudyAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.visor_view),
                 name='studies_study_visor',
             ),
+            path(
+                'documento/<int:doc_pk>/preview.png',
+                self.admin_site.admin_view(self.preview_view),
+                name='studies_study_preview',
+            ),
         ]
         return custom + super().get_urls()
+
+    def preview_view(self, request, doc_pk):
+        doc = get_object_or_404(StudyDocument, pk=doc_pk)
+        if not doc.img_file:
+            raise Http404('Sin archivo .img')
+        try:
+            png = renderizar_img(Path(doc.img_file.path), max_size=1024)
+        except Exception as e:
+            raise Http404(f'Error al renderizar: {e}')
+        from django.http import HttpResponse
+        return HttpResponse(png, content_type='image/png')
 
     # --- Visor de imagenes ---
     FIRMA_XML = "<?xml".encode("utf-16-le")
@@ -256,15 +273,21 @@ class StudyAdmin(admin.ModelAdmin):
                 'tamano': doc.img_file.size if doc.img_file else 0,
             })
 
+        embed = request.GET.get('embed') == '1'
         contexto = {
+            'study': study,
+            'items': items,
+        }
+        if embed:
+            return render(request, 'admin/studies/study/visor_embed.html', contexto)
+
+        contexto.update({
             **self.admin_site.each_context(request),
             'title': f'Visor — {study}',
             'opts': self.model._meta,
-            'study': study,
-            'items': items,
             'cambiar_url': reverse('admin:studies_study_change', args=[study.pk]),
             'changelist_url': reverse('admin:studies_study_changelist'),
-        }
+        })
         return render(request, 'admin/studies/study/visor.html', contexto)
 
     @classmethod

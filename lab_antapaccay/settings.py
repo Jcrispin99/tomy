@@ -127,6 +127,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Permitir que el admin se incruste a si mismo en un iframe (pestana Imagenes).
+X_FRAME_OPTIONS = 'SAMEORIGIN'
+
 # Datos del hospital — se inyectan en reportes/plantillas y como defaults.
 HOSPITAL_NAME = 'Antapaccay'
 HOSPITAL_ADDRESS = ''

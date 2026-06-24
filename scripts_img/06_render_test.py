@@ -1,76 +1,82 @@
 """
-Prueba de extraccion de pixeles del .img Vieworks.
-Intenta varias interpretaciones del bloque de pixeles y genera PNGs.
+Prueba de extraccion de pixeles del .img Vieworks con varias interpretaciones.
 """
 import sys
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 
-def windowing(img_f: Image.Image, w1: float, w2: float, modo: str) -> Image.Image:
+def windowing(arr: np.ndarray, w1: float, w2: float, modo: str) -> np.ndarray:
     if modo == "centro_ancho":
         low = w1 - w2 / 2.0
         high = w1 + w2 / 2.0
-    else:  # min_max
+    else:
         low = w1
         high = w2
     rango = max(high - low, 1)
-    return img_f.point(lambda x: max(0, min(255, (x - low) * 255 / rango)))
+    out = np.clip((arr.astype(np.float32) - low) * 255.0 / rango, 0, 255)
+    return out.astype(np.uint8)
+
+
+def auto_window(arr: np.ndarray, p_low=1, p_high=99) -> np.ndarray:
+    """Auto-window basado en percentiles (descarta outliers)."""
+    lo = np.percentile(arr, p_low)
+    hi = np.percentile(arr, p_high)
+    rango = max(hi - lo, 1)
+    out = np.clip((arr.astype(np.float32) - lo) * 255.0 / rango, 0, 255)
+    return out.astype(np.uint8)
 
 
 def main():
-    ruta = Path(sys.argv[1] if len(sys.argv) > 1
-                else "S2695I3233.img")
+    ruta = Path(sys.argv[1] if len(sys.argv) > 1 else "S2695I3233.img")
     salida = Path(__file__).resolve().parent
     data = ruta.read_bytes()
     W = H = 3072
-    inicio_pixeles = 256
+    offset = 256
+    n_px = W * H
 
     print(f"Archivo: {ruta} ({len(data):,} bytes)")
-    print(f"Bloque pixeles disponible: {len(data) - inicio_pixeles - 156000:,} bytes "
-          f"(restando ~156KB de XML al final)")
-    print(f"Si fueran uint16: {W*H*2:,} bytes ({W*H*2 / (1024*1024):.2f} MB)")
-    print(f"Si fueran uint32: {W*H*4:,} bytes ({W*H*4 / (1024*1024):.2f} MB)")
+    print(f"Bloque disponible para pixeles: ~{(len(data) - offset - 156000) / (1024*1024):.1f} MB")
     print()
 
-    # Intento 1: uint16 LE, primer bloque
-    print("=== Intento 1: uint16 LE primeros 18 MB ===")
-    bloque1 = data[inicio_pixeles:inicio_pixeles + W*H*2]
-    img1 = Image.frombytes('I;16', (W, H), bloque1)
-    f = img1.convert('F')
-    # Probar W1=5087 W2=9411 con interpretacion centro/ancho
-    for modo in ["centro_ancho", "min_max"]:
-        result = windowing(f, 5087, 9411, modo).convert('L')
-        result.thumbnail((800, 800))
-        out = salida / f"render_uint16LE_first_{modo}.png"
-        result.save(out)
-        print(f"  guardado: {out.name}")
+    # === Intento 1: uint16 LE primeros 18 MB ===
+    print("=== uint16 LE primeros 18 MB ===")
+    raw1 = np.frombuffer(data, dtype='<u2', count=n_px, offset=offset)
+    arr1 = raw1.reshape((H, W))
+    print(f"  min={arr1.min()} max={arr1.max()} mean={arr1.mean():.1f}")
 
-    # Intento 2: uint16 LE, segundo bloque (offset +18 MB)
-    print("\n=== Intento 2: uint16 LE segundo bloque ===")
-    off2 = inicio_pixeles + W*H*2
-    bloque2 = data[off2:off2 + W*H*2]
-    if len(bloque2) >= W*H*2:
-        img2 = Image.frombytes('I;16', (W, H), bloque2)
-        f2 = img2.convert('F')
-        for modo in ["centro_ancho", "min_max"]:
-            result = windowing(f2, 5087, 9411, modo).convert('L')
-            result.thumbnail((800, 800))
-            out = salida / f"render_uint16LE_second_{modo}.png"
-            result.save(out)
-            print(f"  guardado: {out.name}")
+    for modo in ("centro_ancho", "min_max"):
+        out8 = windowing(arr1, 5087, 9411, modo)
+        Image.fromarray(out8).resize((800, 800)).save(salida / f"render_uint16_first_{modo}.png")
+        print(f"  guardado: render_uint16_first_{modo}.png")
+    out_auto = auto_window(arr1)
+    Image.fromarray(out_auto).resize((800, 800)).save(salida / "render_uint16_first_auto.png")
+    print(f"  guardado: render_uint16_first_auto.png")
 
-    # Intento 3: detectar rango real de los primeros pixeles para auto-windowing
-    print("\n=== Intento 3: auto-windowing (min/max real) ===")
-    extremos = img1.getextrema()  # devuelve (min, max)
-    print(f"  rango real bloque1: {extremos}")
-    lo, hi = extremos
-    result = f.point(lambda x: max(0, min(255, (x - lo) * 255 / max(hi - lo, 1)))).convert('L')
-    result.thumbnail((800, 800))
-    out = salida / "render_uint16LE_first_auto.png"
-    result.save(out)
-    print(f"  guardado: {out.name}")
+    # === Intento 2: uint16 LE segundo bloque ===
+    print("\n=== uint16 LE segundo bloque (offset +18 MB) ===")
+    off2 = offset + W * H * 2
+    if off2 + n_px * 2 <= len(data):
+        raw2 = np.frombuffer(data, dtype='<u2', count=n_px, offset=off2)
+        arr2 = raw2.reshape((H, W))
+        print(f"  min={arr2.min()} max={arr2.max()} mean={arr2.mean():.1f}")
+        out_auto2 = auto_window(arr2)
+        Image.fromarray(out_auto2).resize((800, 800)).save(salida / "render_uint16_second_auto.png")
+        print(f"  guardado: render_uint16_second_auto.png")
+    else:
+        print("  no alcanza el bloque")
+
+    # === Intento 3: uint32 LE completo ===
+    print("\n=== uint32 LE completo (~36 MB) ===")
+    if offset + n_px * 4 <= len(data) - 100000:
+        raw32 = np.frombuffer(data, dtype='<u4', count=n_px, offset=offset)
+        arr32 = raw32.reshape((H, W))
+        print(f"  min={arr32.min()} max={arr32.max()} mean={arr32.mean():.1f}")
+        out_auto32 = auto_window(arr32)
+        Image.fromarray(out_auto32).resize((800, 800)).save(salida / "render_uint32_auto.png")
+        print(f"  guardado: render_uint32_auto.png")
 
 
 if __name__ == "__main__":
