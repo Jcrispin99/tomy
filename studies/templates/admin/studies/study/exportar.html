@@ -1,0 +1,92 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; Exportar
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .exportar-card { background:#fff; border:1px solid #ddd; border-radius:6px; padding:18px; margin-bottom:18px; }
+  .preset-row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  .preset-row a { padding:6px 12px; border:1px solid #ccc; border-radius:4px; text-decoration:none; color:#333; background:#f5f5f5; }
+  .preset-row a.activo { background:#417690; color:#fff; border-color:#417690; }
+  .resumen { display:flex; gap:30px; flex-wrap:wrap; margin:14px 0; }
+  .resumen div b { display:block; font-size:1.4em; color:#417690; }
+  .acciones { margin-top:14px; }
+  .acciones .button { padding:8px 16px; }
+  .preview-table { width:100%; border-collapse:collapse; margin-top:8px; }
+  .preview-table th, .preview-table td { padding:6px 10px; border-bottom:1px solid #eee; text-align:left; font-size:0.9em; }
+  .preview-table th { background:#f5f5f5; }
+  .muted { color:#888; font-size:0.9em; }
+</style>
+
+<h1>Exportar archivos .img</h1>
+
+<div class="exportar-card">
+  <p>Selecciona un rango de fechas (basado en <b>Fecha de registro</b> del estudio).</p>
+
+  <div class="preset-row">
+    {% for clave, etiqueta in presets.items %}
+      <a href="?preset={{ clave }}" class="{% if preset == clave %}activo{% endif %}">{{ etiqueta }}</a>
+    {% endfor %}
+    <a href="?preset=rango&desde={{ desde }}&hasta={{ hasta }}" class="{% if preset == 'rango' %}activo{% endif %}">Rango personalizado</a>
+  </div>
+
+  <form method="get">
+    <input type="hidden" name="preset" value="rango">
+    <label>Desde: <input type="date" name="desde" value="{{ desde }}"></label>
+    &nbsp;&nbsp;
+    <label>Hasta: <input type="date" name="hasta" value="{{ hasta }}"></label>
+    &nbsp;&nbsp;
+    <button type="submit" class="button">Aplicar</button>
+  </form>
+
+  <div class="resumen">
+    <div><span>Documentos a exportar</span><b>{{ total_documentos }}</b></div>
+    <div><span>Tamaño total</span><b>{{ tamano_total|filesizeformat }}</b></div>
+    <div><span>Rango</span><b>{{ desde }} → {{ hasta }}</b></div>
+  </div>
+
+  <div class="acciones">
+    {% if total_documentos %}
+      <a class="button default" href="?preset={{ preset }}&desde={{ desde }}&hasta={{ hasta }}&descargar=1">
+        Descargar ZIP ({{ total_documentos }} archivo{{ total_documentos|pluralize }})
+      </a>
+    {% else %}
+      <span class="muted">No hay archivos .img en este rango.</span>
+    {% endif %}
+  </div>
+</div>
+
+{% if documentos_preview %}
+<div class="exportar-card">
+  <h2>Vista previa</h2>
+  <table class="preview-table">
+    <thead>
+      <tr><th>Código</th><th>Paciente</th><th>Parte</th><th>Fecha registro</th><th>Archivo</th></tr>
+    </thead>
+    <tbody>
+      {% for d in documentos_preview %}
+      <tr>
+        <td>{{ d.study.patient.code }}</td>
+        <td>{{ d.study.patient.last_name }}, {{ d.study.patient.first_name }}</td>
+        <td>{{ d.body_part.name|default:'—' }}</td>
+        <td>{{ d.study.register_date|date:'Y-m-d' }}</td>
+        <td>{{ d.img_file.name|cut:'studies/' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if documentos_extra %}
+    <p class="muted">… y {{ documentos_extra }} archivo{{ documentos_extra|pluralize }} más.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; Visor — {{ study.patient.code }}
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .visor-header { background:#fff; border:1px solid #ddd; border-radius:6px; padding:14px 18px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+  .visor-header h1 { margin:0; font-size:1.4em; }
+  .visor-header .meta { color:#666; font-size:0.95em; }
+  .visor-card { background:#fff; border:1px solid #ddd; border-radius:6px; margin-bottom:14px; overflow:hidden; }
+  .visor-card-head { background:#f5f5f5; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; }
+  .visor-card-head h2 { margin:0; font-size:1.1em; color:#417690; }
+  .visor-card-body { display:flex; gap:18px; padding:14px; }
+  .visor-preview { width:280px; height:280px; background:#1a1a1a; border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#888; font-size:0.85em; flex-shrink:0; padding:10px; text-align:center; }
+  .visor-preview .ico { font-size:2.5em; opacity:0.4; margin-bottom:6px; }
+  .visor-meta { flex:1; }
+  .visor-meta table { width:100%; border-collapse:collapse; font-size:0.9em; }
+  .visor-meta td { padding:5px 8px; border-bottom:1px solid #f0f0f0; }
+  .visor-meta td:first-child { color:#888; width:38%; font-weight:500; }
+  .visor-meta td.mono { font-family:monospace; font-size:0.82em; color:#666; word-break:break-all; }
+  .acciones { display:flex; gap:8px; }
+  .acciones .button { padding:5px 12px; }
+  .vacio { padding:30px; text-align:center; color:#888; }
+</style>
+
+<div class="visor-header">
+  <div>
+    <h1>{{ study.patient.code }} — {{ study.patient.last_name }}, {{ study.patient.first_name }}</h1>
+    <div class="meta">
+      {% if study.patient.sex %}{{ study.patient.get_sex_display }}{% endif %}
+      {% if study.patient.age %}· {{ study.patient.age }} años{% endif %}
+      · Registrado {{ study.register_date|date:'Y-m-d' }} {{ study.register_time|time:'H:i' }}
+    </div>
+  </div>
+  <div class="acciones">
+    <a href="{{ cambiar_url }}" class="button">Editar estudio</a>
+    <a href="{{ changelist_url }}" class="button">Volver al listado</a>
+  </div>
+</div>
+
+{% for item in items %}
+<div class="visor-card">
+  <div class="visor-card-head">
+    <h2>
+      {{ item.doc.body_part.name|default:'Sin parte' }}
+      &nbsp;·&nbsp;
+      {{ item.doc.date|date:'Y-m-d' }}
+      {% if item.doc.time %} {{ item.doc.time|time:'H:i' }}{% endif %}
+    </h2>
+    <div class="acciones">
+      {% if item.descarga_url %}
+        <a href="{{ item.descarga_url }}" class="button default" download>Descargar .img</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="visor-card-body">
+    <div class="visor-preview">
+      <div class="ico">📷</div>
+      <div><b>Vista previa no disponible</b></div>
+      <div style="font-size:0.78em; margin-top:6px;">El formato Vieworks .img solo es visible en VXvue. El render directo en navegador llegará en Fase 2.</div>
+    </div>
+    <div class="visor-meta">
+      {% if item.meta %}
+      <table>
+        <tr><td>Paciente (XML)</td><td>{{ item.meta.paciente_nombre }} — {{ item.meta.paciente_id }}</td></tr>
+        <tr><td>Sexo / Edad</td><td>{{ item.meta.paciente_sexo|default:'—' }} / {{ item.meta.paciente_edad|default:'—' }}</td></tr>
+        <tr><td>Parte examinada</td><td>{{ item.meta.parte|default:'—' }}</td></tr>
+        <tr><td>Modalidad</td><td>{{ item.meta.modalidad|default:'—' }}</td></tr>
+        <tr><td>Fecha · hora (XML)</td><td>{{ item.meta.estudio_fecha|default:'—' }} {{ item.meta.estudio_hora|default:'' }}</td></tr>
+        <tr><td>Resolución</td><td>{{ item.meta.tamano_px }} px · {{ item.meta.bits|default:'—' }} bits</td></tr>
+        <tr><td>Detector</td><td>{{ item.meta.detector|default:'—' }}</td></tr>
+        <tr><td>Técnica</td><td>{{ item.meta.kvp|default:'—' }} kVp · {{ item.meta.mas|default:'—' }} mAs</td></tr>
+        <tr><td>Tamaño archivo</td><td>{{ item.tamano|filesizeformat }}</td></tr>
+        <tr><td>UID instancia</td><td class="mono">{{ item.meta.uid_instancia }}</td></tr>
+      </table>
+      {% else %}
+      <div class="vacio">No se pudieron leer los metadatos del archivo .img.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% empty %}
+<div class="visor-card">
+  <div class="vacio">Este estudio aún no tiene documentos generados.</div>
+</div>
+{% endfor %}
+
+{% endblock %}

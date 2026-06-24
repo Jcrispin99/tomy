@@ -5,7 +5,12 @@ from django.db.models import CheckConstraint, Q
 class Patient(models.Model):
     SEX_CHOICES = [('V', 'Varón'), ('M', 'Mujer')]
 
-    name = models.CharField('Nombre', max_length=200)
+    code = models.CharField(
+        'Código', max_length=8, unique=True, editable=False,
+        help_text='Correlativo autogenerado (0000001, 0000002, ...).',
+    )
+    last_name = models.CharField('Apellidos', max_length=120)
+    first_name = models.CharField('Nombres', max_length=120)
     sex = models.CharField('Sexo', max_length=1, choices=SEX_CHOICES, blank=True)
     age = models.PositiveSmallIntegerField('Edad', null=True, blank=True)
 
@@ -14,7 +19,7 @@ class Patient(models.Model):
     class Meta:
         verbose_name = 'Paciente'
         verbose_name_plural = 'Pacientes'
-        ordering = ['name']
+        ordering = ['last_name', 'first_name']
         constraints = [
             CheckConstraint(
                 check=Q(sex__in=['V', 'M', '']),
@@ -23,9 +28,28 @@ class Patient(models.Model):
         ]
 
     def __str__(self):
-        if self.age is not None and self.sex:
-            return f'{self.name} ({self.get_sex_display()}, {self.age})'
-        return self.name
+        return f'{self.code} — {self.last_name}, {self.first_name}'
+
+    @property
+    def full_name(self) -> str:
+        return f'{self.last_name}, {self.first_name}'.strip(', ')
+
+    def dicom_name(self) -> str:
+        return f'{self.last_name.strip()}^{self.first_name.strip()}^^^'
+
+    def dicom_sex(self) -> str:
+        return {'V': 'M', 'M': 'F'}.get(self.sex, '')
+
+    @classmethod
+    def siguiente_code(cls) -> str:
+        ultimo = cls.objects.order_by('-code').values_list('code', flat=True).first()
+        n = int(ultimo) + 1 if ultimo and ultimo.isdigit() else 1
+        return f'{n:07d}'
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            self.code = self.siguiente_code()
+        super().save(*args, **kwargs)
 
 
 class BodyPart(models.Model):
@@ -68,6 +92,9 @@ class Study(models.Model):
         'Bits usados', null=True, blank=True,
     )
 
+    study_uid = models.CharField('Study Instance UID', max_length=64, blank=True)
+    series_uid = models.CharField('Series Instance UID', max_length=64, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -87,7 +114,7 @@ class Study(models.Model):
 
     def __str__(self):
         ref = self.access_number or f'#{self.pk}'
-        return f'{ref} — {self.patient.name}'
+        return f'{ref} — {self.patient.full_name}'
 
 
 class StudyDocument(models.Model):
@@ -95,17 +122,20 @@ class StudyDocument(models.Model):
         Study, on_delete=models.CASCADE, related_name='documents',
         verbose_name='Estudio',
     )
-    image = models.ImageField(
-        'Imagen JPG', upload_to='studies/%Y/%m/',
-        width_field='width', height_field='height',
+    img_file = models.FileField(
+        'Archivo .img', upload_to='studies/%Y/%m/',
     )
     width = models.PositiveIntegerField('Ancho (px)', null=True, blank=True)
     height = models.PositiveIntegerField('Alto (px)', null=True, blank=True)
+    instance_uid = models.CharField(
+        'SOP Instance UID', max_length=64, blank=True,
+    )
     body_part = models.ForeignKey(
         BodyPart, on_delete=models.PROTECT, null=True, blank=True,
         related_name='documents', verbose_name='Parte del cuerpo',
     )
-    date = models.DateField('Fecha', null=True, blank=True)
+    date = models.DateField('Fecha del examen')
+    time = models.TimeField('Hora del examen', null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -114,4 +144,4 @@ class StudyDocument(models.Model):
         ordering = ['uploaded_at']
 
     def __str__(self):
-        return self.image.name.rsplit('/', 1)[-1]
+        return self.img_file.name.rsplit('/', 1)[-1]

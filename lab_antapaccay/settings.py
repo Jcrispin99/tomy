@@ -149,6 +149,16 @@ JAZZMIN_SETTINGS = {
         'auth.User': 'fas fa-user',
         'auth.Group': 'fas fa-users',
     },
+    'custom_links': {
+        'studies': [
+            {
+                'name': 'Exportar .img',
+                'url': 'admin:studies_study_exportar',
+                'icon': 'fas fa-file-export',
+                'permissions': ['studies.view_study'],
+            },
+        ],
+    },
     'order_with_respect_to': ['studies', 'auth'],
     'show_ui_builder': False,
 }
