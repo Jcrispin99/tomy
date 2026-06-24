@@ -30,7 +30,8 @@ def auto_window(arr: np.ndarray, p_low=1, p_high=99) -> np.ndarray:
 
 
 def main():
-    ruta = Path(sys.argv[1] if len(sys.argv) > 1 else "S2695I3233.img")
+    ruta = Path(sys.argv[1] if len(sys.argv) > 1 else
+                Path(__file__).resolve().parent / "plantilla_vacia.img")
     salida = Path(__file__).resolve().parent
     data = ruta.read_bytes()
     W = H = 3072

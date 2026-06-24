@@ -19,6 +19,7 @@ from scripts_img.empaquetar_img import (
     DatosPaciente,
     empaquetar_img,
     generar_uid,
+    pdf_a_pixeles,
 )
 from scripts_img.render_img import renderizar_img
 
@@ -50,7 +51,7 @@ class StudyDocumentForm(forms.ModelForm):
     pdf_upload = forms.FileField(
         label='Subir PDF',
         required=False,
-        help_text='Por ahora el PDF se descarta; el .img se arma con los datos del paciente.',
+        help_text='Se renderiza a 3072×3072 y se empaqueta como .img Vieworks.',
     )
 
     class Meta:
@@ -127,11 +128,22 @@ class StudyAdmin(admin.ModelAdmin):
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
         study = form.instance
-        for doc in study.documents.filter(img_file=''):
-            self._generar_img_para_documento(study, doc)
+        for formset in formsets:
+            if formset.model is not StudyDocument:
+                continue
+            for sub_form in formset.forms:
+                if not sub_form.cleaned_data:
+                    continue
+                doc = sub_form.instance
+                if not doc.pk or doc.img_file:
+                    continue
+                pdf = sub_form.cleaned_data.get('pdf_upload')
+                if not pdf:
+                    continue
+                self._generar_img_para_documento(study, doc, pdf)
 
     @staticmethod
-    def _generar_img_para_documento(study: Study, doc: StudyDocument) -> None:
+    def _generar_img_para_documento(study: Study, doc: StudyDocument, pdf_file) -> None:
         if not study.study_uid:
             study.study_uid = generar_uid()
         if not study.series_uid:
@@ -169,10 +181,15 @@ class StudyAdmin(admin.ModelAdmin):
             institution='CENTRO MEDICO TINTAYA',
         )
 
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+            for chunk in pdf_file.chunks():
+                tmp_pdf.write(chunk)
+            tmp_pdf_path = Path(tmp_pdf.name)
         with tempfile.NamedTemporaryFile(suffix='.img', delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            empaquetar_img(tmp_path, paciente, estudio)
+            pixeles = pdf_a_pixeles(tmp_pdf_path)
+            empaquetar_img(tmp_path, paciente, estudio, pixeles)
             nombre = f'{patient.code}_{doc.instance_uid.split(".")[-1][:8]}.img'
             with tmp_path.open('rb') as fh:
                 doc.img_file.save(nombre, File(fh), save=False)
@@ -181,6 +198,7 @@ class StudyAdmin(admin.ModelAdmin):
             doc.save(update_fields=['img_file', 'instance_uid', 'width', 'height'])
         finally:
             tmp_path.unlink(missing_ok=True)
+            tmp_pdf_path.unlink(missing_ok=True)
 
     @admin.display(description='Paciente', ordering='patient__last_name')
     def paciente_link(self, obj):

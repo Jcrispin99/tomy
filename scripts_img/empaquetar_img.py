@@ -1,28 +1,44 @@
 """
 Empaquetador de archivos .img de Vieworks VXvue.
 
-Fase 1: reutiliza los pixeles de una plantilla .img existente y solo
-reemplaza el bloque XML de metadatos al final del archivo con los datos
-nuevos del paciente/estudio.
+La plantilla aporta el header binario (56 bytes), el separador interno
+entre bloques de pixeles y la zona desconocida que va antes del XML.
+Los dos bloques de pixeles se sobreescriben con la imagen renderizada
+desde el PDF y el XML se reemplaza por uno nuevo con los datos del
+paciente/estudio.
 
 Uso desde otro modulo:
-    from scripts_img.empaquetar_img import empaquetar_img
-    empaquetar_img(plantilla, salida, datos)
+    from scripts_img.empaquetar_img import empaquetar_img, pdf_a_pixeles
+    pixeles = pdf_a_pixeles(Path("estudio.pdf"))
+    empaquetar_img(salida, paciente, estudio, pixeles)
 
 Uso CLI:
-    python -m scripts_img.empaquetar_img <plantilla.img> <salida.img>
+    python -m scripts_img.empaquetar_img <entrada.pdf> <salida.img>
 """
 from __future__ import annotations
 
+import struct
 import sys
 import uuid
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
+import io
 
-PLANTILLA_DEFECTO = Path(__file__).resolve().parent.parent / "S2695I3233.img"
+import fitz  # pymupdf
+import numpy as np
+from PIL import Image
+
+
+PLANTILLA = Path(__file__).resolve().parent / "plantilla_vacia.img"
 FIRMA_XML_UTF16 = "<?xml".encode("utf-16-le")
+
+ANCHO = ALTO = 3072
+BITS = 14
+PX_MAX = (1 << BITS) - 1  # 16383
+BLOQUE_PX_BYTES = ANCHO * ALTO * 2  # 18,874,368
+OFFSET_PUNTERO_XML = 0x24  # uint32 LE con (xml_pos - 4)
 
 
 @dataclass
@@ -127,29 +143,116 @@ def _aplicar_datos_al_xml(
         "AcquisitionDate": estudio.study_date,
         "AcquisitionTime": estudio.study_time,
         "InstanceUID": estudio.instance_uid,
+        "ImageID": "",
+    })
+
+    # Vaciar datos de dosis: los valores eran reales del estudio original
+    # y arrastrarlos a un .img nuevo seria informacion clinica falsa.
+    set_attrs("INSTANCE_INFO/Dose", {
+        "KVP": "", "MA": "", "MS": "", "MAS": "",
+        "ExposureIndex": "", "TargetExposureIndex": "",
+        "DeviationIndex": "", "Dap": "",
     })
 
     cuerpo = ET.tostring(root, encoding="unicode").replace(" />", "/>")
     return '<?xml version="1.0"?>\r\n' + cuerpo + '\r\n'
 
 
+def _extraer_imagen_pdf(pdf_path: Path) -> Image.Image:
+    """Devuelve la imagen mas grande embebida en la primera pagina.
+    Si no hay imagenes embebidas, rasteriza la pagina a alta resolucion.
+    """
+    with fitz.open(pdf_path) as doc:
+        page = doc[0]
+        imagenes = page.get_images(full=True)
+        if imagenes:
+            # Tomar la de mayor area (descarta logos pequenos)
+            mejor_xref = max(imagenes, key=lambda im: doc.extract_image(im[0])['width']
+                             * doc.extract_image(im[0])['height'])[0]
+            info = doc.extract_image(mejor_xref)
+            return Image.open(io.BytesIO(info['image']))
+
+        # Fallback: rasterizar a 4x para tener resolucion decente
+        zoom = max(ANCHO * 2 / page.rect.width, ALTO * 2 / page.rect.height)
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        return Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
+
+
+def pdf_a_pixeles(pdf_path: Path) -> np.ndarray:
+    """Convierte la primera pagina del PDF a una matriz uint16 3072x3072
+    de 14 bits, lista para empaquetar en un .img Vieworks.
+
+    Pasa el JPEG embebido tal cual: gris, resize LANCZOS preservando aspect,
+    padding blanco para integrarse con el fondo del escaneo. Sin inversion
+    ni ajustes de contraste; el visor aplica su propio window/level.
+    """
+    img = _extraer_imagen_pdf(pdf_path)
+    if img.mode != 'L':
+        img = img.convert('L')
+    gris = np.array(img, dtype=np.uint8)
+
+    h, w = gris.shape
+    escala = min(ALTO / h, ANCHO / w)
+    nuevo_h, nuevo_w = max(1, round(h * escala)), max(1, round(w * escala))
+    if (h, w) != (nuevo_h, nuevo_w):
+        gris = np.array(
+            Image.fromarray(gris).resize((nuevo_w, nuevo_h), Image.LANCZOS),
+            dtype=np.uint8,
+        )
+
+    # Padding blanco: continua el fondo del papel escaneado y deja la
+    # radiografia tal cual la decidio el origen, sin transformar colores.
+    lienzo = np.full((ALTO, ANCHO), 255, dtype=np.uint8)
+    y0 = (ALTO - gris.shape[0]) // 2
+    x0 = (ANCHO - gris.shape[1]) // 2
+    lienzo[y0:y0 + gris.shape[0], x0:x0 + gris.shape[1]] = gris
+
+    return (lienzo.astype(np.uint32) * PX_MAX // 255).astype(np.uint16)
+
+
 def empaquetar_img(
     salida: Path,
     paciente: DatosPaciente,
     estudio: DatosEstudio,
-    plantilla: Path = PLANTILLA_DEFECTO,
+    pixeles: np.ndarray,
+    plantilla: Path = PLANTILLA,
 ) -> Path:
-    """Genera un .img nuevo en `salida` reusando los pixeles de `plantilla`
-    y reemplazando el XML con los datos provistos.
+    """Genera un .img nuevo escribiendo:
+      - header binario y zona intermedia copiados de `plantilla`
+      - ambos bloques de pixeles sobreescritos con `pixeles` (3072x3072 uint16)
+      - puntero al XML en offset 0x24 actualizado
+      - XML reemplazado con los datos provistos
     """
+    if pixeles.shape != (ALTO, ANCHO) or pixeles.dtype != np.uint16:
+        raise ValueError(
+            f"pixeles debe ser uint16 {ALTO}x{ANCHO}, "
+            f"recibido {pixeles.dtype} {pixeles.shape}"
+        )
+
     salida = Path(salida)
     plantilla = Path(plantilla)
-    data = plantilla.read_bytes()
+    data = bytearray(plantilla.read_bytes())
     xml_inicio = _localizar_xml(data)
-    xml_texto = data[xml_inicio:].decode("utf-16-le", errors="replace")
 
+    px_bytes = pixeles.tobytes()
+    # Bloque 1: empieza justo despues del header (0x38)
+    fin_bloque1 = 0x38 + BLOQUE_PX_BYTES
+    data[0x38:fin_bloque1] = px_bytes
+    # Separador de 8 bytes entre bloques, despues empieza bloque 2
+    inicio_bloque2 = fin_bloque1 + 8
+    fin_bloque2 = inicio_bloque2 + BLOQUE_PX_BYTES
+    data[inicio_bloque2:fin_bloque2] = px_bytes
+
+    # XML nuevo
+    xml_texto = bytes(data[xml_inicio:]).decode("utf-16-le", errors="replace")
     nuevo_xml = _aplicar_datos_al_xml(xml_texto, paciente, estudio)
     nuevo_xml_bytes = nuevo_xml.encode("utf-16-le")
+
+    # Pre-XML (header + bloques + zona intermedia) conserva su tamano,
+    # pero el XML puede haber cambiado de longitud: el puntero apunta a
+    # (nuevo_xml_pos - 4).
+    nuevo_xml_pos = xml_inicio
+    struct.pack_into("<I", data, OFFSET_PUNTERO_XML, nuevo_xml_pos - 4)
 
     salida.parent.mkdir(parents=True, exist_ok=True)
     with open(salida, "wb") as f:
@@ -161,10 +264,10 @@ def empaquetar_img(
 def _main_cli() -> None:
     if len(sys.argv) < 3:
         print("Uso: python -m scripts_img.empaquetar_img "
-              "<plantilla.img> <salida.img>")
+              "<entrada.pdf> <salida.img>")
         sys.exit(1)
 
-    plantilla = Path(sys.argv[1])
+    pdf_path = Path(sys.argv[1])
     salida = Path(sys.argv[2])
 
     paciente = DatosPaciente(
@@ -184,7 +287,8 @@ def _main_cli() -> None:
         performing_physician="rayosx^^^^",
         institution="CENTRO MEDICO TINTAYA",
     )
-    ruta = empaquetar_img(salida, paciente, estudio, plantilla)
+    pixeles = pdf_a_pixeles(pdf_path)
+    ruta = empaquetar_img(salida, paciente, estudio, pixeles)
     print(f"Generado: {ruta}")
 
 

@@ -4,7 +4,7 @@ Extrae el bloque XML de metadatos del .img y lo imprime/guarda.
 import re
 from pathlib import Path
 
-RUTA = Path(__file__).resolve().parent.parent / "S2695I3233.img"
+RUTA = Path(__file__).resolve().parent / "plantilla_vacia.img"
 SALIDA_XML = Path(__file__).resolve().parent / "metadatos_extraidos.xml"
 
 

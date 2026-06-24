@@ -115,7 +115,7 @@ def main():
     if len(sys.argv) >= 2:
         ruta = Path(sys.argv[1])
     else:
-        ruta = Path(__file__).resolve().parent.parent / "S2695I3233.img"
+        ruta = Path(__file__).resolve().parent / "plantilla_vacia.img"
 
     if not ruta.exists():
         print(f"No existe el archivo: {ruta}")

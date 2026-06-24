@@ -68,7 +68,10 @@ def renderizar_img(
     """Devuelve los bytes PNG de la imagen renderizada.
 
     invertir=True deja convencion radiologica: huesos brillantes, aire oscuro.
-    usar_window_xml=True usa W1/W2 del XML; False hace auto-window (mejor contraste).
+    Por defecto usa ventana enfocada al cuerpo (percentiles 2-70%), que da
+    buen contraste radiologico en imagenes Vieworks. El W1/W2 del XML resulta
+    descalibrado cuando la mediana de los pixeles del cuerpo cae por debajo
+    de W1, asi que solo se usa cuando se pide explicitamente.
     """
     data = Path(ruta).read_bytes()
     w, h, wl = _leer_dimensiones_y_window(data)
@@ -78,9 +81,9 @@ def renderizar_img(
     arr = raw.reshape((h, w))
 
     if usar_window_xml and wl is not None:
-        out8 = _aplicar_window(arr, wl[0], wl[1])
+        out8 = _aplicar_window(arr, wl[0], wl[1], modo="min_max")
     else:
-        out8 = _auto_window(arr)
+        out8 = _auto_window(arr, p_low=2.0, p_high=70.0)
 
     img = Image.fromarray(out8, mode="L")
     if invertir:

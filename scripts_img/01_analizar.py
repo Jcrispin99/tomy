@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-RUTA = Path(__file__).resolve().parent.parent / "S2695I3233.img"
+RUTA = Path(__file__).resolve().parent / "plantilla_vacia.img"
 
 
 def hexdump_seccion(data: bytes, inicio: int, largo: int = 256) -> str:
