@@ -37,6 +37,8 @@ FIRMA_XML_UTF16 = "<?xml".encode("utf-16-le")
 ANCHO = ALTO = 3072
 BITS = 14
 PX_MAX = (1 << BITS) - 1  # 16383
+PX_SOFT_MIN = 512
+PX_SOFT_MAX = 14335
 BLOQUE_PX_BYTES = ANCHO * ALTO * 2  # 18,874,368
 OFFSET_PUNTERO_XML = 0x24  # uint32 LE con (xml_pos - 4)
 
@@ -89,6 +91,9 @@ def _aplicar_datos_al_xml(
     xml_texto: str,
     paciente: DatosPaciente,
     estudio: DatosEstudio,
+    *,
+    px_window_min: int = PX_SOFT_MIN,
+    px_window_max: int = PX_SOFT_MAX,
 ) -> str:
     root = ET.fromstring(xml_texto)
 
@@ -144,6 +149,7 @@ def _aplicar_datos_al_xml(
         "AcquisitionTime": estudio.study_time,
         "InstanceUID": estudio.instance_uid,
         "ImageID": "",
+        "SaturationLevel": str(px_window_max),
     })
 
     # Vaciar datos de dosis: los valores eran reales del estudio original
@@ -153,6 +159,13 @@ def _aplicar_datos_al_xml(
         "ExposureIndex": "", "TargetExposureIndex": "",
         "DeviationIndex": "", "Dap": "",
     })
+
+    # La plantilla trae ventanas de visualizacion agresivas para el estudio
+    # original. Las suavizamos para que el visor externo no "reviente" los
+    # tonos de una radiografia convertida desde PDF/JPG/PNG.
+    for nodo in root.findall(".//WindowLevel"):
+        nodo.set("W1", str(px_window_min))
+        nodo.set("W2", str(px_window_max))
 
     cuerpo = ET.tostring(root, encoding="unicode").replace(" />", "/>")
     return '<?xml version="1.0"?>\r\n' + cuerpo + '\r\n'
@@ -178,18 +191,21 @@ def _extraer_imagen_pdf(pdf_path: Path) -> Image.Image:
         return Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
 
 
-def pdf_a_pixeles(pdf_path: Path) -> np.ndarray:
-    """Convierte la primera pagina del PDF a una matriz uint16 3072x3072
-    de 14 bits, lista para empaquetar en un .img Vieworks.
+def imagen_a_pixeles(img: Image.Image | Path) -> np.ndarray:
+    """Convierte una imagen a una matriz uint16 3072x3072 de 14 bits.
 
-    Pasa el JPEG embebido tal cual: gris, resize LANCZOS preservando aspect,
-    padding blanco para integrarse con el fondo del escaneo. Sin inversion
-    ni ajustes de contraste; el visor aplica su propio window/level.
+    Mantiene el contenido visual tal cual fue aprobado en PNG/JPG:
+    escala de grises, resize LANCZOS preservando aspect ratio y padding
+    blanco. No aplica inversion ni auto-contraste.
     """
-    img = _extraer_imagen_pdf(pdf_path)
-    if img.mode != 'L':
-        img = img.convert('L')
-    gris = np.array(img, dtype=np.uint8)
+    if isinstance(img, (str, Path)):
+        with Image.open(img) as opened:
+            work_img = opened.copy()
+    else:
+        work_img = img.copy()
+    if work_img.mode != 'L':
+        work_img = work_img.convert('L')
+    gris = np.array(work_img, dtype=np.uint8)
 
     h, w = gris.shape
     escala = min(ALTO / h, ANCHO / w)
@@ -207,7 +223,21 @@ def pdf_a_pixeles(pdf_path: Path) -> np.ndarray:
     x0 = (ANCHO - gris.shape[1]) // 2
     lienzo[y0:y0 + gris.shape[0], x0:x0 + gris.shape[1]] = gris
 
-    return (lienzo.astype(np.uint32) * PX_MAX // 255).astype(np.uint16)
+    rango_suave = PX_SOFT_MAX - PX_SOFT_MIN
+    return (
+        PX_SOFT_MIN
+        + (lienzo.astype(np.uint32) * rango_suave // 255)
+    ).astype(np.uint16)
+
+
+def pdf_a_pixeles(pdf_path: Path) -> np.ndarray:
+    """Convierte la primera pagina del PDF a pixeles 14-bit listos para .img.
+
+    Extrae la imagen mejor disponible del PDF y reutiliza el mismo pipeline
+    de `imagen_a_pixeles()` para que el contenido visual sea consistente.
+    """
+    img = _extraer_imagen_pdf(pdf_path)
+    return imagen_a_pixeles(img)
 
 
 def empaquetar_img(
@@ -245,7 +275,13 @@ def empaquetar_img(
 
     # XML nuevo
     xml_texto = bytes(data[xml_inicio:]).decode("utf-16-le", errors="replace")
-    nuevo_xml = _aplicar_datos_al_xml(xml_texto, paciente, estudio)
+    nuevo_xml = _aplicar_datos_al_xml(
+        xml_texto,
+        paciente,
+        estudio,
+        px_window_min=int(pixeles.min()),
+        px_window_max=int(pixeles.max()),
+    )
     nuevo_xml_bytes = nuevo_xml.encode("utf-16-le")
 
     # Pre-XML (header + bloques + zona intermedia) conserva su tamano,

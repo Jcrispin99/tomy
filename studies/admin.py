@@ -19,8 +19,9 @@ from scripts_img.empaquetar_img import (
     DatosPaciente,
     empaquetar_img,
     generar_uid,
-    pdf_a_pixeles,
+    imagen_a_pixeles,
 )
+from scripts_img.pdf_a_imagen import pdf_a_imagen
 from scripts_img.render_img import renderizar_img
 
 from .models import BodyPart, Patient, Study, StudyDocument
@@ -185,10 +186,15 @@ class StudyAdmin(admin.ModelAdmin):
             for chunk in pdf_file.chunks():
                 tmp_pdf.write(chunk)
             tmp_pdf_path = Path(tmp_pdf.name)
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_png:
+            tmp_png_path = Path(tmp_png.name)
         with tempfile.NamedTemporaryFile(suffix='.img', delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            pixeles = pdf_a_pixeles(tmp_pdf_path)
+            # Primero congelamos la imagen "buena" en gris, y desde esos
+            # mismos pixeles generamos el .img con metadatos.
+            pdf_a_imagen(tmp_pdf_path, tmp_png_path, gris=True)
+            pixeles = imagen_a_pixeles(tmp_png_path)
             empaquetar_img(tmp_path, paciente, estudio, pixeles)
             nombre = f'{patient.code}_{doc.instance_uid.split(".")[-1][:8]}.img'
             with tmp_path.open('rb') as fh:
@@ -198,6 +204,7 @@ class StudyAdmin(admin.ModelAdmin):
             doc.save(update_fields=['img_file', 'instance_uid', 'width', 'height'])
         finally:
             tmp_path.unlink(missing_ok=True)
+            tmp_png_path.unlink(missing_ok=True)
             tmp_pdf_path.unlink(missing_ok=True)
 
     @admin.display(description='Paciente', ordering='patient__last_name')
@@ -261,8 +268,13 @@ class StudyAdmin(admin.ModelAdmin):
         doc = get_object_or_404(StudyDocument, pk=doc_pk)
         if not doc.img_file:
             raise Http404('Sin archivo .img')
+        invertir = request.GET.get('invertir', '1') != '0'
         try:
-            png = renderizar_img(Path(doc.img_file.path), max_size=1024)
+            png = renderizar_img(
+                Path(doc.img_file.path),
+                max_size=1024,
+                invertir=invertir,
+            )
         except Exception as e:
             raise Http404(f'Error al renderizar: {e}')
         from django.http import HttpResponse
