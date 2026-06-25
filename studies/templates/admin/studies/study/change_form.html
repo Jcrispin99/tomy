@@ -2,6 +2,212 @@
 
 {% block extrahead %}
 {{ block.super }}
+<style>
+  /* Hacer visible el widget select2 del autocompletar (Paciente) sobre Flatly */
+  .field-patient .select2-container,
+  .related-widget-wrapper .select2-container { width: 100% !important; }
+  .field-patient .select2-selection--single,
+  .related-widget-wrapper .select2-selection--single {
+    height: 38px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+  }
+  .field-patient .select2-selection--single .select2-selection__rendered,
+  .related-widget-wrapper .select2-selection--single .select2-selection__rendered {
+    line-height: 36px;
+    color: #212529;
+    padding-left: 0;
+  }
+  .field-patient .select2-selection--single .select2-selection__arrow,
+  .related-widget-wrapper .select2-selection--single .select2-selection__arrow {
+    height: 36px;
+  }
+  .field-patient .select2-selection--single .select2-selection__placeholder,
+  .related-widget-wrapper .select2-selection--single .select2-selection__placeholder {
+    color: #6c757d;
+  }
+
+  #pdf-dropzone {
+    border: 2px dashed #9aa0a6;
+    border-radius: 10px;
+    padding: 22px 18px;
+    margin: 12px 0 18px 0;
+    text-align: center;
+    background: #f8f9fb;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  #pdf-dropzone.is-hover {
+    background: #eef4ff;
+    border-color: #2b6cb0;
+  }
+  #pdf-dropzone p { margin: 0 0 4px 0; font-size: 14px; color: #333; }
+  #pdf-dropzone small { color: #666; }
+  #pdf-dropzone .pdf-dz-status { margin-top: 8px; font-size: 12px; color: #2b6cb0; }
+  tr.dynamic-documents.pdf-dz-loaded > td { background: #eaf7ea !important; }
+</style>
+<script>
+(function () {
+  // ---- Drag & drop de PDFs sobre el inline de Documentos ----
+  function findInlineGroup() {
+    return document.querySelector('#documents-group');
+  }
+
+  function findAddLink(group) {
+    return group.querySelector('.add-row a, a.addlink, a.add-row');
+  }
+
+  function findEmptyFileInput() {
+    var inputs = document.querySelectorAll(
+      'input[type="file"][name$="-pdf_upload"]'
+    );
+    for (var i = 0; i < inputs.length; i++) {
+      var inp = inputs[i];
+      var row = inp.closest('tr, .inline-related');
+      if (row && row.classList.contains('empty-form')) continue;
+      if (row && row.id && row.id.indexOf('empty') !== -1) continue;
+      if (!inp.files || inp.files.length === 0) return inp;
+    }
+    return null;
+  }
+
+  function setFileOnInput(input, file) {
+    try {
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      var row = input.closest('tr, .inline-related');
+      if (row) row.classList.add('pdf-dz-loaded');
+      var label = row && row.querySelector('label[for="' + input.id + '"]');
+      // Mostrar el nombre del archivo junto al input
+      var hint = input.parentElement.querySelector('.pdf-dz-filename');
+      if (!hint) {
+        hint = document.createElement('div');
+        hint.className = 'pdf-dz-filename';
+        hint.style.cssText = 'font-size:11px;color:#2b6cb0;margin-top:4px;';
+        input.parentElement.appendChild(hint);
+      }
+      hint.textContent = file.name;
+      return true;
+    } catch (e) {
+      console.error('No se pudo asignar el PDF al input', e);
+      return false;
+    }
+  }
+
+  function prefillDateInRow(input) {
+    var row = input.closest('tr, .inline-related');
+    if (!row) return;
+    var dateInput = row.querySelector('input[name$="-date"]');
+    if (dateInput && !dateInput.value) {
+      var d = new Date();
+      var iso = d.getFullYear() + '-' +
+                String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                String(d.getDate()).padStart(2, '0');
+      dateInput.value = iso;
+    }
+  }
+
+  function addPdfs(files, statusEl) {
+    var group = findInlineGroup();
+    if (!group) return;
+    var addLink = findAddLink(group);
+    var pdfs = Array.prototype.filter.call(files, function (f) {
+      return /\.pdf$/i.test(f.name);
+    });
+    var rejected = files.length - pdfs.length;
+    var ok = 0;
+
+    pdfs.forEach(function (file) {
+      var target = findEmptyFileInput();
+      if (!target) {
+        if (!addLink) return;
+        addLink.click();
+        target = findEmptyFileInput();
+      }
+      if (target && setFileOnInput(target, file)) {
+        prefillDateInRow(target);
+        ok++;
+      }
+    });
+
+    if (statusEl) {
+      var msg = ok + ' PDF' + (ok === 1 ? '' : 's') + ' cargado'
+              + (ok === 1 ? '' : 's') + '. Falta completar parte del cuerpo y fecha.';
+      if (rejected) msg += ' (' + rejected + ' archivo(s) ignorado(s): no son PDF)';
+      statusEl.textContent = msg;
+    }
+  }
+
+  function injectarDropzone() {
+    var group = findInlineGroup();
+    if (!group) return false;
+    if (document.getElementById('pdf-dropzone')) return true;
+
+    var dz = document.createElement('div');
+    dz.id = 'pdf-dropzone';
+    dz.innerHTML =
+      '<p><strong>Arrastra aquí varios PDFs</strong> o haz clic para seleccionarlos</p>' +
+      '<small>Se creará una fila por cada PDF; luego completa parte del cuerpo y fecha.</small>' +
+      '<div class="pdf-dz-status"></div>' +
+      '<input type="file" multiple accept="application/pdf,.pdf" style="display:none">';
+
+    // Insertar arriba del contenido del inline
+    var container = group.querySelector('.tabular, fieldset') || group;
+    container.parentNode.insertBefore(dz, container);
+
+    var hidden = dz.querySelector('input[type="file"]');
+    var statusEl = dz.querySelector('.pdf-dz-status');
+
+    dz.addEventListener('click', function (e) {
+      if (e.target === hidden) return;
+      hidden.click();
+    });
+    hidden.addEventListener('change', function () {
+      addPdfs(hidden.files, statusEl);
+      hidden.value = '';
+    });
+    ['dragenter', 'dragover'].forEach(function (ev) {
+      dz.addEventListener(ev, function (e) {
+        e.preventDefault(); e.stopPropagation();
+        dz.classList.add('is-hover');
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (ev) {
+      dz.addEventListener(ev, function (e) {
+        e.preventDefault(); e.stopPropagation();
+        dz.classList.remove('is-hover');
+      });
+    });
+    dz.addEventListener('drop', function (e) {
+      if (e.dataTransfer && e.dataTransfer.files) {
+        addPdfs(e.dataTransfer.files, statusEl);
+      }
+    });
+
+    return true;
+  }
+
+  function esperar(fn) {
+    if (fn()) return;
+    var n = 0;
+    var iv = setInterval(function () {
+      if (fn() || ++n > 40) clearInterval(iv);
+    }, 150);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { esperar(injectarDropzone); });
+  } else {
+    esperar(injectarDropzone);
+  }
+})();
+</script>
 {% if original.pk %}
 <script>
 (function () {
